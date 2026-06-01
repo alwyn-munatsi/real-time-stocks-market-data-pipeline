@@ -1,0 +1,11 @@
+# Pin exact sub-package versions so pip resolves immediately with no backtracking.
+# dbt 1.8+ introduced dbt-adapters and dbt-common as separate packages; pinning
+# all of them prevents the resolver from scanning hundreds of version combinations.
+snowflake-connector-python[pandas]>=3.7.0,<3.8.0
+dbt-snowflake>=1.8.0,<1.9.0
+dbt-core>=1.8.0,<1.9.0
+dbt-adapters>=1.0.0,<2.0.0
+dbt-common>=1.0.0,<2.0.0
+apache-airflow-providers-snowflake>=5.1.0,<6.0.0
+apache-airflow-providers-amazon>=8.0.0,<9.0.0
+python-dotenv>=1.0.0

@@ -1,0 +1,178 @@
+version: '3.8'
+
+# The environment anchor is defined separately so airflow-init can merge it
+# AND add its own variable. Without this, defining environment: in airflow-init
+# would completely replace the inherited one, causing Airflow to fall back to
+# SQLite instead of using PostgreSQL.
+x-airflow-common:
+  &airflow-common
+  image: apache/airflow:2.8.1-python3.11
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    PYTHONPATH: /opt/airflow
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./kafka_producer:/opt/airflow/kafka_producer
+    - ./kafka_consumer:/opt/airflow/kafka_consumer
+    - ./snowflake:/opt/airflow/snowflake
+    - ./dbt_stock:/opt/airflow/dbt_stock
+    - ./requirements-airflow.txt:/requirements-airflow.txt
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+
+  # ── KAFKA ──────────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── STREAMING SERVICES ─────────────────────────────────────────────────────
+  kafka-producer:
+    image: python:3.11-slim
+    container_name: kafka-producer
+    env_file:
+      - .env
+    volumes:
+      - ./kafka_producer:/app
+    working_dir: /app
+    command:
+      - bash
+      - -c
+      - "pip install yfinance kafka-python python-dotenv && python producer.py"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+
+  kafka-consumer:
+    image: python:3.11-slim
+    container_name: kafka-consumer
+    env_file:
+      - .env
+    volumes:
+      - ./kafka_consumer:/app
+    working_dir: /app
+    command:
+      - bash
+      - -c
+      - "pip install kafka-python boto3 pandas pyarrow python-dotenv && python consumer.py"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+
+  # ── AIRFLOW ────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install -r /requirements-airflow.txt
+        airflow db migrate
+        airflow users create \
+          --username ${_AIRFLOW_WWW_USER_USERNAME:-admin} \
+          --firstname Admin \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com \
+          --password ${_AIRFLOW_WWW_USER_PASSWORD:-admin} || true
+        echo "Airflow initialisation complete."
+    environment:
+      <<: *airflow-common-env        # inherit ALL common env vars
+      _AIRFLOW_DB_MIGRATE: 'true'    # then add this one on top
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command:
+      - bash
+      - -c
+      - "pip install -r /requirements-airflow.txt && airflow webserver"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command:
+      - bash
+      - -c
+      - "pip install -r /requirements-airflow.txt && airflow scheduler"
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-db-volume:

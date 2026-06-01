@@ -1,0 +1,38 @@
+version: 2
+
+# A source declaration tells dbt that this table already exists in Snowflake
+# (we didn't create it with dbt — the Airflow COPY INTO job created it).
+# Using {{ source('raw', 'STOCK_PRICES') }} in SQL instead of a raw table name
+# means dbt can document lineage and run source freshness checks.
+
+sources:
+  - name: raw
+    database: STOCK_DB
+    schema: RAW
+    description: "Raw stock price ticks loaded from S3 via the Kafka consumer pipeline"
+    tables:
+      - name: STOCK_PRICES
+        description: "One row per ticker per poll cycle — unmodified from Yahoo Finance"
+        columns:
+          - name: ticker
+            description: "Stock ticker symbol (e.g. AAPL)"
+          - name: timestamp
+            description: "UTC timestamp of the price tick"
+          - name: price
+            description: "Last traded price at the time of the poll"
+          - name: open
+            description: "Opening price for the current trading session"
+          - name: high
+            description: "Intraday high for the current trading session"
+          - name: low
+            description: "Intraday low for the current trading session"
+          - name: volume
+            description: "Number of shares traded in the most recent tick"
+          - name: previous_close
+            description: "Closing price from the previous trading session"
+          - name: market_cap
+            description: "Total market capitalisation in USD"
+          - name: exchange
+            description: "Exchange where the stock is listed (e.g. NMS, NYQ)"
+          - name: _loaded_at
+            description: "Timestamp when this row was inserted into Snowflake"

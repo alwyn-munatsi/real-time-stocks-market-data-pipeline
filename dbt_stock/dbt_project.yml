@@ -1,0 +1,39 @@
+name: 'dbt_stock'
+version: '1.0.0'
+config-version: 2
+
+# The profile name must match the key in profiles.yml
+profile: 'dbt_stock'
+
+model-paths:    ["models"]
+test-paths:     ["tests"]
+macro-paths:    ["macros"]
+snapshot-paths: ["snapshots"]
+seed-paths:     ["seeds"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  dbt_stock:
+    # Staging layer — reads from RAW, writes lightweight views into CLEANED.
+    # Views are used here because staging is just renaming/typing — no need
+    # to materialise the data twice.
+    staging:
+      +schema: CLEANED
+      +materialized: view
+
+    # Intermediate layer — business logic built on top of staging.
+    # Also views; they only exist to break up complex SQL into readable steps.
+    intermediate:
+      +schema: CLEANED
+      +materialized: view
+
+    # Marts layer — the final tables Power BI reads from.
+    # Materialised as tables so Power BI queries run fast without recalculating
+    # window functions on every dashboard refresh.
+    marts:
+      +schema: BUSINESS_READY
+      +materialized: table

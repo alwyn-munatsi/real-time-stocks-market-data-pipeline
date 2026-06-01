@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: int_daily_ohlcv
+    description: >
+      One OHLCV row per ticker per trading day, collapsed from intraday ticks.
+      Open = first tick, Close = last tick, High/Low = extremes, Volume = sum.
+    columns:
+      - name: ticker
+        tests: [not_null]
+      - name: trade_date
+        tests: [not_null]
+      - name: daily_close
+        tests: [not_null]
+      - name: daily_volume
+        tests: [not_null]
